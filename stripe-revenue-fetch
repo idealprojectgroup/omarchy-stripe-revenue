@@ -28,7 +28,7 @@ CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/stripe-revenue"
 STRIPE_VERSION="2024-06-20"
 DAYS="${1:-7}"
 [[ "$DAYS" =~ ^[0-9]+$ ]] && (( DAYS >= 1 && DAYS <= 31 )) || DAYS=7
-PAYMENT_LIMIT=20
+PAYMENT_LIMIT=10
 
 INCOME_FILTER='select(.type | IN("charge", "payment", "application_fee",
   "refund", "payment_refund", "application_fee_refund", "adjustment"))'

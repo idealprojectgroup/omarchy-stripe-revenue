@@ -272,7 +272,7 @@ Panel {
             spacing: Style.space(4)
 
             Text {
-              text: "PAYMENTS"
+              text: "RECENT PAYMENTS"
               color: root.dimForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.caption
