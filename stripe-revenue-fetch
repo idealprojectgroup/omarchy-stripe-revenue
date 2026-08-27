@@ -49,15 +49,18 @@ now="$(date +%s)"
 fetch_rows() {
   local gte="$1" lt="$2" starting_after="" url page code body pages=""
   while :; do
-    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}"
+    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}&expand[]=data.source"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
     page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "401" || "$code" == "403" ]] && return 2
     [[ "$code" == "200" ]] || return 1
+    # payer: who paid a direct charge, from the expanded charge's billing
+    # details — the description on those is just the plan name.
     pages+="$(jq "[.data[] | ${INCOME_FILTER}
-      | {created, type, net, desc: (.description // \"\")}]" <<<"$body")" || return 1
+      | {created, type, net, desc: (.description // \"\"),
+         payer: (.source.billing_details.name? // \"\")}]" <<<"$body")" || return 1
     pages+=$'\n'
     if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
       starting_after="$(jq -r '.data[-1].id' <<<"$body")"
@@ -93,7 +96,7 @@ today_start="$(date -d "today 00:00" +%s)"
 today_rows="$(fetch_rows "$today_start" "$now")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
 today_total="$(jq 'map(.net) | add // 0' <<<"$today_rows")"
 payments="$(jq "sort_by(-.created) | .[0:${PAYMENT_LIMIT}]
-  | map({at: .created, type, net, desc})" <<<"$today_rows")"
+  | map({at: .created, type, net, desc, payer})" <<<"$today_rows")"
 
 days="[{\"date\":\"$(date +%F)\",\"cents\":${today_total}}"
 for (( i = 1; i < DAYS; i++ )); do

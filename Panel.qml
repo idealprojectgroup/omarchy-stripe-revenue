@@ -51,7 +51,14 @@ Panel {
     return Qt.formatDate(parseDay(dateString), "ddd MMM d")
   }
 
+  // Card names arrive shouting ("BRITTANY STRAMER"); read them like names.
+  function titleCase(text) {
+    return String(text).toLowerCase().replace(/(^|[\s\-'])[a-z]/g, function(c) { return c.toUpperCase() })
+  }
+
   function paymentLabel(payment) {
+    var payer = String(payment.payer || "").trim()
+    if (payer !== "") return titleCase(payer)
     var description = String(payment.desc || "")
       .replace(/^Application fee from application .*? for /, "")
       .replace(/\s*\(acct_[^)]*\)\s*$/, "")
