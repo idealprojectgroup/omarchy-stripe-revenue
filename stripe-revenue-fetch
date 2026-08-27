@@ -49,18 +49,22 @@ now="$(date +%s)"
 fetch_rows() {
   local gte="$1" lt="$2" starting_after="" url page code body pages=""
   while :; do
-    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}&expand[]=data.source"
+    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}&expand[]=data.source&expand[]=data.source.account"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
     page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "401" || "$code" == "403" ]] && return 2
     [[ "$code" == "200" ]] || return 1
-    # payer: who paid a direct charge, from the expanded charge's billing
-    # details — the description on those is just the plan name.
+    # payer: who the money is from — a direct charge's cardholder from its
+    # billing details (the description is just the plan name), or an
+    # application fee's studio from the connected account's business name.
     pages+="$(jq "[.data[] | ${INCOME_FILTER}
       | {created, type, net, desc: (.description // \"\"),
-         payer: (.source.billing_details.name? // \"\")}]" <<<"$body")" || return 1
+         payer: (.source.billing_details.name?
+           // .source.account.business_profile.name?
+           // .source.account.settings.dashboard.display_name?
+           // \"\")}]" <<<"$body")" || return 1
     pages+=$'\n'
     if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
       starting_after="$(jq -r '.data[-1].id' <<<"$body")"

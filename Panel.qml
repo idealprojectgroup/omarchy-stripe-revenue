@@ -52,8 +52,11 @@ Panel {
   }
 
   // Card names arrive shouting ("BRITTANY STRAMER"); read them like names.
+  // Only all-caps strings are recased — "Kona Hot Yoga LLC" keeps its LLC.
   function titleCase(text) {
-    return String(text).toLowerCase().replace(/(^|[\s\-'])[a-z]/g, function(c) { return c.toUpperCase() })
+    var source = String(text)
+    if (source !== source.toUpperCase()) return source
+    return source.toLowerCase().replace(/(^|[\s\-'])[a-z]/g, function(c) { return c.toUpperCase() })
   }
 
   function paymentLabel(payment) {
