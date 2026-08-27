@@ -29,14 +29,23 @@ dashboard directly.
 1. Enable the widget:
 
    ```bash
-   omarchy plugin enable io.github.awicklander.stripe-revenue right
+   omarchy plugin enable io.github.idealprojectgroup.stripe-revenue right
    ```
 
 2. Click the widget (it shows "Stripe: set key"). A floating terminal
-   walks you through creating a **restricted** API key with only
-   **Balance: Read** permission (covers balance transactions), verifies
-   the key you paste against Stripe, and saves it to
+   walks you through creating a **restricted** API key, verifies the key
+   you paste against Stripe, and saves it to
    `~/.config/stripe-revenue/api_key` (0600).
+
+Key permissions (everything read-only):
+
+- **Balance: Read** — required; totals, history, and payout info.
+- **Charges: Read** — recommended; payer names on direct charges.
+- **Connect → Accounts: Read** — for Connect platforms; studio/business
+  names on application fees.
+
+With only Balance access the numbers all work; the payments feed just
+shows less identity detail.
 
 To set the key by hand instead:
 

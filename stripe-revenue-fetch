@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Net income from Stripe for the bar widget, printed as one line of JSON:
 #   {"days":      [{"date":"YYYY-MM-DD","cents":N}, ...]   newest first,
-#    "payments":  [{"at":EPOCH,"type":"charge","net":N,"desc":"..."}, ...]
+#    "payments":  [{"at":EPOCH,"type":"charge","net":N,
+#                   "desc":"...","payer":"..."}, ...]
 #                 today's income rows, newest first, capped,
 #    "last_month":{"date":"YYYY-MM-DD","cents":N}   same day one month back,
+#    "payout":    {"pending":N, "in_transit":N, "arrival":"YYYY-MM-DD",
+#                  "upcoming":[{"date":"YYYY-MM-DD","cents":N}, ...]},
 #    "updated":   EPOCH}
 # Errors also come back as JSON ({"error":"no_key"|"auth"|"fetch_failed"})
 # with exit 0, so the widget always has something to parse.
@@ -231,8 +234,12 @@ resp="$(curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION
     body="${resp%$'\n'*}"
     in_transit="$(jq '[.data[] | select(.status == "pending" or .status == "in_transit")
       | .amount] | add // 0' <<<"$body")"
-    arrival="$(jq '[.data[] | select(.status == "pending" or .status == "in_transit")
-      | .arrival_date] | min // null' <<<"$body")"
+    # As a calendar date: arrival_date is a UTC midnight, which local-time
+    # rendering west of UTC would show as the previous day.
+    arrival="$(jq -r '([.data[] | select(.status == "pending" or .status == "in_transit")
+      | .arrival_date] | min) as $m
+      | if $m then ($m | strftime("%Y-%m-%d")) else "null" end' <<<"$body")"
+    [[ "$arrival" == "null" ]] || arrival="\"${arrival}\""
   fi
 }
 

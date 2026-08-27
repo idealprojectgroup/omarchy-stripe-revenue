@@ -8,8 +8,8 @@ import qs.Ui
 // this panel the button to anchor against.
 Panel {
   id: root
-  moduleName: "io.github.awicklander.stripe-revenue"
-  ipcTarget: "io.github.awicklander.stripe-revenue"
+  moduleName: "io.github.idealprojectgroup.stripe-revenue"
+  ipcTarget: "io.github.idealprojectgroup.stripe-revenue"
   manageIpc: false
 
   property var anchorItem: null
@@ -252,7 +252,7 @@ Panel {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.hasInTransit && root.payout.arrival
-                  ? "Payout arriving " + Qt.formatDate(new Date(root.payout.arrival * 1000), "ddd MMM d")
+                  ? "Payout arriving " + Qt.formatDate(root.parseDay(root.payout.arrival), "ddd MMM d")
                   : "Payout in transit"
                 color: root.dimForeground
                 font.family: root.contentFontFamily

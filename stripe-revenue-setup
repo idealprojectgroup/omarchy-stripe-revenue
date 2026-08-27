@@ -50,5 +50,5 @@ chmod 700 "$(dirname "$KEY_FILE")"
 (umask 177 && printf '%s\n' "$key" > "$KEY_FILE")
 
 echo "Key verified and saved to $KEY_FILE"
-omarchy-shell -q io.github.awicklander.stripe-revenue refresh
+omarchy-shell -q io.github.idealprojectgroup.stripe-revenue refresh
 sleep 2

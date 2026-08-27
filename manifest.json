@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.awicklander.stripe-revenue",
+  "id": "io.github.idealprojectgroup.stripe-revenue",
   "name": "Stripe Revenue",
   "version": "0.1.0",
   "author": "Andrew Wicklander",
   "license": "MIT",
-  "description": "Today's and yesterday's Stripe revenue in the bar, polled from the Stripe API.",
+  "description": "Today's net Stripe income in the bar, with recent payments, upcoming payouts, and daily history in a click-open panel.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Stripe Revenue",
-    "description": "Today's revenue, live, next to yesterday's total. Click to open the Stripe dashboard.",
+    "description": "Today's net income, live. Click for recent payments, upcoming payouts, and the last week — same day last month included.",
     "category": "Finance",
     "aliases": [
       "stripe",

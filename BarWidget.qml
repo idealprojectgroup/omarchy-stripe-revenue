@@ -12,7 +12,7 @@ import qs.Ui
 // enters the shell process or shell.json.
 BarWidget {
   id: root
-  moduleName: "io.github.awicklander.stripe-revenue"
+  moduleName: "io.github.idealprojectgroup.stripe-revenue"
 
   // Newest first; days[0] is today. Shapes match the fetch script's JSON.
   property var days: []
@@ -150,7 +150,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "io.github.awicklander.stripe-revenue"
+    target: "io.github.idealprojectgroup.stripe-revenue"
 
     function refresh(): void { root.broadcast("refresh") }
     function open(): void { root.open() }
