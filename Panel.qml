@@ -138,6 +138,15 @@ Panel {
             }
 
             Text {
+              visible: root.lastUpdated.getTime() > 0
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "as of " + Qt.formatTime(root.lastUpdated, "h:mmap")
+              color: root.faintForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
               anchors.horizontalCenter: parent.horizontalCenter
               text: root.todayCents < 0 ? "…" : root.moneyExact(root.todayCents)
               color: root.contentForeground
@@ -156,15 +165,6 @@ Panel {
               color: root.faintForeground
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
-            }
-
-            Text {
-              visible: root.lastUpdated.getTime() > 0
-              anchors.horizontalCenter: parent.horizontalCenter
-              text: "as of " + Qt.formatTime(root.lastUpdated, "h:mmap")
-              color: root.faintForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
             }
           }
 
