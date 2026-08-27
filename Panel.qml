@@ -382,7 +382,7 @@ Panel {
             }
           }
 
-          // ---- Footer: the dashboard, and when the numbers were last true.
+          // ---- Footer: the dashboard.
           Item {
             width: parent.width
             height: Style.space(22)
@@ -390,7 +390,7 @@ Panel {
             Text {
               anchors.left: parent.left
               anchors.verticalCenter: parent.verticalCenter
-              text: "Open Stripe dashboard"
+              text: "Open Stripe dashboard ↗"
               color: dashboardMouse.containsMouse
                 ? Style.hoverStateColor(root.contentForeground, Color.accent)
                 : root.dimForeground
@@ -407,15 +407,6 @@ Panel {
                   root.close()
                 }
               }
-            }
-
-            Text {
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: "as of " + Qt.formatTime(root.lastUpdated, "h:mm ap")
-              color: root.faintForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.caption
             }
           }
         }
