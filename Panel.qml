@@ -147,11 +147,15 @@ Panel {
             }
 
             Text {
-              anchors.horizontalCenter: parent.horizontalCenter
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
               text: root.todayCents < 0 ? "…" : root.moneyExact(root.todayCents)
               color: root.contentForeground
               font.family: root.contentFontFamily
+              // Fits itself to the panel when the day runs to six figures.
               font.pixelSize: 44
+              fontSizeMode: Text.HorizontalFit
+              minimumPixelSize: 22
               font.weight: Font.DemiBold
             }
 
