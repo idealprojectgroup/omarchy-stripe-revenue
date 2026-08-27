@@ -109,14 +109,49 @@ lm_lt="$(date -d "$lm_date 00:00 + 1 day" +%s)"
 lm_total="$(day_total "$lm_gte" "$lm_lt" "$lm_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
 last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
 
-# What's on the way: the pending balance, and any payout in transit with
-# its arrival date. Best-effort — a restricted key without these
-# permissions just leaves the fields null rather than failing the widget.
+# fetch_pending_rows GTE -> every still-pending balance transaction since
+# GTE as [{available_on, net}] on stdout; nonzero exit on any failure.
+fetch_pending_rows() {
+  local gte="$1" starting_after="" url page code body pages=""
+  while :; do
+    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}"
+    [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
+    page="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "$url")" || return 1
+    code="${page##*$'\n'}"
+    body="${page%$'\n'*}"
+    [[ "$code" == "200" ]] || return 1
+    pages+="$(jq '[.data[] | select(.status == "pending") | {available_on, net}]' <<<"$body")" || return 1
+    pages+=$'\n'
+    if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
+      starting_after="$(jq -r '.data[-1].id' <<<"$body")"
+    else
+      break
+    fi
+  done
+  jq -s 'add // []' <<<"$pages"
+}
+
+# What's on the way: upcoming payouts, and any payout already in transit
+# with its arrival date. Upcoming payouts are the dashboard's breakdown,
+# reproduced by grouping pending funds by the day they become available —
+# weekend maturities roll forward to Monday, the day Stripe pays them.
+# Best-effort — a restricted key without these permissions just leaves the
+# fields empty rather than failing the widget.
 pending="null"
 resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/balance")" && {
   code="${resp##*$'\n'}"
   [[ "$code" == "200" ]] && pending="$(jq '[.pending[]?.amount] | add // 0' <<<"${resp%$'\n'*}")"
 }
+upcoming="[]"
+if pending_rows="$(fetch_pending_rows "$(date -d '14 days ago' +%s)")"; then
+  upcoming="$(jq '[ .[]
+    | .available_on as $t
+    | (($t | gmtime)[6]) as $wd
+    | {date: (if $wd == 6 then $t + 2*86400 elif $wd == 0 then $t + 86400 else $t end), net} ]
+    | group_by(.date)
+    | map({date: (.[0].date | strftime("%Y-%m-%d")), cents: (map(.net) | add)})
+    | sort_by(.date)' <<<"$pending_rows")"
+fi
 in_transit="null"
 arrival="null"
 resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/payouts?limit=10")" && {
@@ -133,6 +168,7 @@ resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.str
 jq -nc --argjson days "$days" --argjson payments "$payments" \
   --argjson last_month "$last_month" --argjson now "$now" \
   --argjson pending "$pending" --argjson in_transit "$in_transit" --argjson arrival "$arrival" \
+  --argjson upcoming "$upcoming" \
   '{days: $days, payments: $payments, last_month: $last_month,
-    payout: {pending: $pending, in_transit: $in_transit, arrival: $arrival},
+    payout: {pending: $pending, in_transit: $in_transit, arrival: $arrival, upcoming: $upcoming},
     updated: $now}'

@@ -24,8 +24,10 @@ Panel {
   readonly property var payments: hostWidget ? hostWidget.payments : []
   readonly property var lastMonth: hostWidget ? hostWidget.lastMonth : null
   readonly property var payout: hostWidget ? hostWidget.payout : null
+  readonly property var upcoming: payout !== null && payout.upcoming ? payout.upcoming : []
   readonly property bool hasPending: payout !== null && payout.pending !== null && payout.pending > 0
   readonly property bool hasInTransit: payout !== null && payout.in_transit !== null && payout.in_transit > 0
+  readonly property bool hasOnTheWay: upcoming.length > 0 || hasPending || hasInTransit
   readonly property int todayCents: hostWidget ? hostWidget.todayCents : -1
   readonly property date lastUpdated: hostWidget ? hostWidget.lastUpdated : new Date(0)
 
@@ -151,10 +153,12 @@ Panel {
             width: parent.width
           }
 
-          // ---- Money on the way: the pending balance, and any payout
-          //      already in transit with its arrival day.
+          // ---- Money on the way: upcoming payouts by expected date (the
+          //      dashboard's breakdown), any payout already in transit, and
+          //      the plain pending total only when the breakdown is not
+          //      available.
           Column {
-            visible: root.hasPending || root.hasInTransit
+            visible: root.hasOnTheWay
             width: parent.width
             spacing: Style.space(4)
 
@@ -167,8 +171,37 @@ Panel {
               font.bold: true
             }
 
+            Repeater {
+              model: root.upcoming
+
+              Item {
+                id: upcomingRow
+                required property var modelData
+                width: content.width
+                height: Style.space(20)
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Payout " + Qt.formatDate(root.parseDay(upcomingRow.modelData.date), "ddd MMM d")
+                  color: root.dimForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.moneyExact(upcomingRow.modelData.cents)
+                  color: root.contentForeground
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+              }
+            }
+
             Item {
-              visible: root.hasPending
+              visible: root.hasPending && root.upcoming.length === 0
               width: content.width
               height: Style.space(20)
 
@@ -219,7 +252,7 @@ Panel {
           }
 
           PanelSeparator {
-            visible: root.hasPending || root.hasInTransit
+            visible: root.hasOnTheWay
             width: parent.width
           }
 
