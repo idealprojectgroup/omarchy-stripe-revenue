@@ -94,25 +94,57 @@ today_rows="$(fetch_rows "$today_start" "$now")" || { [[ $? -eq 2 ]] && fail aut
 today_total="$(jq 'map(.net) | add // 0' <<<"$today_rows")"
 
 # The feed: one page of the newest rows (Stripe lists newest first), with
-# the source and connected account expanded for payer identity — a direct
-# charge's cardholder from its billing details (the description is just
-# the plan name), or an application fee's studio from the connected
-# account's business name. The expansions are heavy, which is why they
-# ride on this single capped page and not on the totals scan. Best-effort:
-# a failure here empties the feed for one poll, not the widget.
+# the source expanded for payer identity — a direct charge's cardholder
+# from its billing details (the description is just the plan name), or an
+# application fee's connected account id, resolved to the studio's
+# business name below. Expanding accounts inline is prohibitively slow,
+# which is why they resolve one at a time into a permanent local cache.
+# Best-effort: a failure here empties the feed for one poll, not the widget.
 payments="[]"
 resp="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' \
-  "https://api.stripe.com/v1/balance_transactions?limit=$(( PAYMENT_LIMIT * 3 ))&created[gte]=${today_start}&expand[]=data.source&expand[]=data.source.account")" && {
+  "https://api.stripe.com/v1/balance_transactions?limit=$(( PAYMENT_LIMIT * 3 ))&created[gte]=${today_start}&expand[]=data.source")" && {
   code="${resp##*$'\n'}"
   if [[ "$code" == "200" ]]; then
     payments="$(jq "[.data[] | ${INCOME_FILTER}
       | {at: .created, type, net, desc: (.description // \"\"),
-         payer: (.source.billing_details.name?
-           // .source.account.business_profile.name?
-           // .source.account.settings.dashboard.display_name?
-           // \"\")}] | .[0:${PAYMENT_LIMIT}]" <<<"${resp%$'\n'*}")" || payments="[]"
+         payer: (.source.billing_details.name? // \"\"),
+         acct: (.source.account? // \"\")}] | .[0:${PAYMENT_LIMIT}]" <<<"${resp%$'\n'*}")" || payments="[]"
   fi
 }
+
+# Connected accounts resolve to business names once each, in parallel, and
+# live in the cache from then on — a platform's studio roster barely
+# changes. A name that fails to resolve just falls back to the row's
+# description until a later poll gets it.
+ACCOUNTS_CACHE="$CACHE_DIR/accounts.json"
+accounts="$(cat "$ACCOUNTS_CACHE" 2>/dev/null)"
+jq -e 'type == "object"' >/dev/null 2>&1 <<<"$accounts" || accounts="{}"
+
+missing="$(jq -r --argjson known "$accounts" \
+  '[.[] | .acct | select(. != "" and $known[.] == null)] | unique | .[0:12] | .[]' <<<"$payments")"
+if [[ -n "$missing" ]]; then
+  lookup_dir="$(mktemp -d)"
+  for acct_id in $missing; do
+    [[ "$acct_id" =~ ^acct_[A-Za-z0-9]+$ ]] || continue
+    curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" \
+      "https://api.stripe.com/v1/accounts/${acct_id}" \
+      | jq -r '.business_profile.name? // .settings.dashboard.display_name? // empty' \
+      > "$lookup_dir/$acct_id" 2>/dev/null &
+  done
+  wait
+  for acct_id in $missing; do
+    name="$(cat "$lookup_dir/$acct_id" 2>/dev/null)"
+    [[ -n "$name" ]] || continue
+    accounts="$(jq --arg id "$acct_id" --arg name "$name" '. + {($id): $name}' <<<"$accounts")"
+  done
+  rm -rf "$lookup_dir"
+  mkdir -p "$CACHE_DIR"
+  printf '%s\n' "$accounts" > "$ACCOUNTS_CACHE"
+fi
+
+payments="$(jq --argjson names "$accounts" \
+  'map(if .payer == "" and .acct != "" then .payer = ($names[.acct] // "") else . end
+       | del(.acct))' <<<"$payments")"
 
 days="[{\"date\":\"$(date +%F)\",\"cents\":${today_total}}"
 for (( i = 1; i < DAYS; i++ )); do
