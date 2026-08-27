@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Net income from Stripe for the bar widget, printed as one line of JSON:
+#   {"days":      [{"date":"YYYY-MM-DD","cents":N}, ...]   newest first,
+#    "payments":  [{"at":EPOCH,"type":"charge","net":N,"desc":"..."}, ...]
+#                 today's income rows, newest first, capped,
+#    "last_month":{"date":"YYYY-MM-DD","cents":N}   same day one month back,
+#    "updated":   EPOCH}
+# Errors also come back as JSON ({"error":"no_key"|"auth"|"fetch_failed"})
+# with exit 0, so the widget always has something to parse.
+#
+# Income is summed from /v1/balance_transactions .net (Stripe's fee already
+# deducted) over income types only: direct charges, payments, and platform
+# application fees, with refunds of each subtracting as their own negative
+# entries. Everything else in the feed — payouts (type "transfer" on older
+# API versions), Stripe Capital paydowns, Stripe's billing fees, top-ups —
+# is money movement, not income, and is left out.
+#
+# Days are local-timezone calendar days. A finished day's total can no
+# longer change (a balance transaction's created is immutable), so past
+# days are cached and Stripe is only asked about today on most runs.
+set -uo pipefail
+
+KEY_FILE="${STRIPE_REVENUE_KEY_FILE:-$HOME/.config/stripe-revenue/api_key}"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/stripe-revenue"
+DAYS="${1:-7}"
+[[ "$DAYS" =~ ^[0-9]+$ ]] && (( DAYS >= 1 && DAYS <= 31 )) || DAYS=7
+PAYMENT_LIMIT=20
+
+INCOME_FILTER='select(.type | IN("charge", "payment", "application_fee",
+  "refund", "payment_refund", "application_fee_refund", "adjustment"))'
+
+fail() {
+  printf '{"error":"%s"}\n' "$1"
+  exit 0
+}
+
+[[ -r "$KEY_FILE" ]] || fail no_key
+KEY="$(head -n1 "$KEY_FILE" | tr -d '[:space:]')"
+[[ -n "$KEY" ]] || fail no_key
+
+now="$(date +%s)"
+
+# fetch_rows GTE LT -> every income row in the window as one JSON array on
+# stdout (pages merged); nonzero exit on any failure, 2 on auth.
+fetch_rows() {
+  local gte="$1" lt="$2" starting_after="" url page code body pages=""
+  while :; do
+    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}"
+    [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
+    page="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "$url")" || return 1
+    code="${page##*$'\n'}"
+    body="${page%$'\n'*}"
+    [[ "$code" == "401" || "$code" == "403" ]] && return 2
+    [[ "$code" == "200" ]] || return 1
+    pages+="$(jq "[.data[] | ${INCOME_FILTER}
+      | {created, type, net, desc: (.description // \"\")}]" <<<"$body")" || return 1
+    pages+=$'\n'
+    if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
+      starting_after="$(jq -r '.data[-1].id' <<<"$body")"
+    else
+      break
+    fi
+  done
+  jq -s 'add // []' <<<"$pages"
+}
+
+# day_total GTE LT CACHE_KEY -> total cents, from cache when a finished
+# day was summed before. An empty CACHE_KEY (today) is never cached.
+day_total() {
+  local gte="$1" lt="$2" cache_key="$3" cache_file rows total
+  if [[ -n "$cache_key" ]]; then
+    cache_file="$CACHE_DIR/v2-$cache_key"
+    if [[ -r "$cache_file" ]]; then
+      cat "$cache_file"
+      return 0
+    fi
+  fi
+  rows="$(fetch_rows "$gte" "$lt")" || return $?
+  total="$(jq 'map(.net) | add // 0' <<<"$rows")"
+  if [[ -n "$cache_key" ]]; then
+    mkdir -p "$CACHE_DIR"
+    printf '%s\n' "$total" > "$CACHE_DIR/v2-$cache_key"
+  fi
+  echo "$total"
+}
+
+# Today: one fetch serves both the total and the payments feed.
+today_start="$(date -d "today 00:00" +%s)"
+today_rows="$(fetch_rows "$today_start" "$now")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
+today_total="$(jq 'map(.net) | add // 0' <<<"$today_rows")"
+payments="$(jq "sort_by(-.created) | .[0:${PAYMENT_LIMIT}]
+  | map({at: .created, type, net, desc})" <<<"$today_rows")"
+
+days="[{\"date\":\"$(date +%F)\",\"cents\":${today_total}}"
+for (( i = 1; i < DAYS; i++ )); do
+  day_date="$(date -d "$i days ago" +%F)"
+  gte="$(date -d "$i days ago 00:00" +%s)"
+  lt="$(date -d "$(( i - 1 )) days ago 00:00" +%s)"
+  total="$(day_total "$gte" "$lt" "$day_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
+  days+=",{\"date\":\"${day_date}\",\"cents\":${total}}"
+done
+days+="]"
+
+# The same calendar day one month back, for the panel's comparison line.
+# A past day, so it caches like the history above.
+lm_date="$(date -d "1 month ago" +%F)"
+lm_gte="$(date -d "$lm_date 00:00" +%s)"
+lm_lt="$(date -d "$lm_date 00:00 + 1 day" +%s)"
+lm_total="$(day_total "$lm_gte" "$lm_lt" "$lm_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
+last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
+
+jq -nc --argjson days "$days" --argjson payments "$payments" \
+  --argjson last_month "$last_month" --argjson now "$now" \
+  '{days: $days, payments: $payments, last_month: $last_month, updated: $now}'

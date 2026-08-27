@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Interactive setup, run in a floating terminal from the bar widget: paste a
+# restricted Stripe key, verify it against the API, save it with tight
+# permissions, and nudge the widget to refresh.
+set -uo pipefail
+
+KEY_FILE="${STRIPE_REVENUE_KEY_FILE:-$HOME/.config/stripe-revenue/api_key}"
+
+pause_and_exit() {
+  echo
+  read -n1 -rsp "Press any key to close."
+  exit "$1"
+}
+
+echo "Stripe Revenue — setup"
+echo
+echo "This widget needs a RESTRICTED Stripe API key with only"
+echo "Balance: Read permission (for balance transactions). Create one at:"
+echo
+echo "  https://dashboard.stripe.com/apikeys"
+echo
+echo "(Create restricted key → \"build your own integration\" →"
+echo " set Balance to Read, leave everything else at None.)"
+echo
+read -rsp "Paste the key (input is hidden): " key
+echo
+key="${key//[[:space:]]/}"
+
+if [[ -z "$key" ]]; then
+  echo "Nothing entered — key unchanged."
+  pause_and_exit 1
+fi
+
+echo "Checking the key against Stripe…"
+code="$(curl -sg -o /dev/null -w '%{http_code}' --max-time 20 \
+  -u "${key}:" "https://api.stripe.com/v1/balance_transactions?limit=1")"
+
+if [[ "$code" != "200" ]]; then
+  case "$code" in
+    401|403) echo "Stripe rejected the key (HTTP $code). Is it the full rk_live_… key with Balance: Read?" ;;
+    000)     echo "Could not reach Stripe — check your connection and try again." ;;
+    *)       echo "Unexpected response from Stripe (HTTP $code)." ;;
+  esac
+  pause_and_exit 1
+fi
+
+mkdir -p "$(dirname "$KEY_FILE")"
+chmod 700 "$(dirname "$KEY_FILE")"
+(umask 177 && printf '%s\n' "$key" > "$KEY_FILE")
+
+echo "Key verified and saved to $KEY_FILE"
+omarchy-shell -q io.github.awicklander.stripe-revenue refresh
+sleep 2

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.awicklander.stripe-revenue",
+  "name": "Stripe Revenue",
+  "version": "0.1.0",
+  "author": "Andrew Wicklander",
+  "license": "MIT",
+  "description": "Today's and yesterday's Stripe revenue in the bar, polled from the Stripe API.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Stripe Revenue",
+    "description": "Today's revenue, live, next to yesterday's total. Click to open the Stripe dashboard.",
+    "category": "Finance",
+    "aliases": [
+      "stripe",
+      "revenue"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "pollSeconds": 60,
+      "showCents": false,
+      "days": 7
+    },
+    "schema": [
+      {
+        "key": "pollSeconds",
+        "type": "number",
+        "label": "Poll interval (seconds)",
+        "defaultValue": 60
+      },
+      {
+        "key": "showCents",
+        "type": "boolean",
+        "label": "Show cents in the bar",
+        "defaultValue": false
+      },
+      {
+        "key": "days",
+        "type": "number",
+        "label": "Days of history in the panel",
+        "defaultValue": 7
+      }
+    ]
+  }
+}
