@@ -70,6 +70,18 @@ Finished days can't change, so their totals are cached in
 `~/.cache/stripe-revenue/` and steady-state polling only asks Stripe
 about today.
 
+## Removal
+
+```bash
+omarchy plugin remove io.github.idealprojectgroup.stripe-revenue
+```
+
+Then delete the key and caches if you're done for good:
+
+```bash
+rm -rf ~/.config/stripe-revenue ~/.cache/stripe-revenue
+```
+
 ## Dependencies
 
 `bash`, `curl`, `jq` (all stock on Omarchy).
