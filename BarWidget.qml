@@ -39,15 +39,19 @@ BarWidget {
 
   readonly property string displayText: {
     if (error === "no_key" || error === "auth") return "Stripe: set key"
+    // A transient failure keeps the last good numbers on the bar; the next
+    // poll heals it. Only a failure with nothing to show reads as an error.
+    if (todayCents >= 0) return money(todayCents)
     if (error !== "") return "Stripe: error"
-    if (todayCents < 0) return "Stripe …"
-    return money(todayCents)
+    return "Stripe …"
   }
 
   readonly property string tooltip: {
     if (error === "no_key") return "Click to set up your Stripe API key"
     if (error === "auth") return "Stripe rejected the saved API key — click to set it up again"
-    if (error !== "") return "Could not reach Stripe — will retry"
+    if (error !== "")
+      return "Could not reach Stripe — will retry"
+        + (todayCents >= 0 ? " (showing " + Qt.formatTime(lastUpdated, "h:mm ap") + " numbers)" : "")
     if (todayCents < 0) return "Loading Stripe revenue…"
     return "Net income today — click for details"
   }
