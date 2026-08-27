@@ -18,6 +18,7 @@ BarWidget {
   property var days: []
   property var payments: []
   property var lastMonth: null
+  property var payout: null
   property string error: ""
   property date lastUpdated: new Date(0)
 
@@ -96,6 +97,7 @@ BarWidget {
     days = parsed.days || []
     payments = parsed.payments || []
     lastMonth = parsed.last_month || null
+    payout = parsed.payout || null
     lastUpdated = new Date()
   }
 
@@ -181,10 +183,34 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
+    // The visible text is the overlay below — WidgetButton cannot weight
+    // its own label — so the slot is sized from metrics taken at the same
+    // weight, not from the hidden default-weight label.
     text: root.displayText
+    labelVisible: false
+    hasVisualContent: root.displayText !== ""
+    fixedWidth: Math.max(12, labelMetrics.advanceWidth + button.scaledHorizontalMargin * 2)
     tooltipText: root.tooltip
     horizontalMargin: 8.75
     verticalPadding: 8.75
+
+    TextMetrics {
+      id: labelMetrics
+      text: root.displayText
+      font.family: button.fontFamily
+      font.pixelSize: button.fontSize
+      font.weight: Font.Medium
+    }
+
+    Text {
+      anchors.centerIn: parent
+      text: root.displayText
+      color: button.foreground
+      font.family: button.fontFamily
+      font.pixelSize: button.fontSize
+      font.weight: Font.Medium
+      renderType: Text.NativeRendering
+    }
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.refresh()

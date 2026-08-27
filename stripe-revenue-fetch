@@ -109,6 +109,30 @@ lm_lt="$(date -d "$lm_date 00:00 + 1 day" +%s)"
 lm_total="$(day_total "$lm_gte" "$lm_lt" "$lm_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
 last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
 
+# What's on the way: the pending balance, and any payout in transit with
+# its arrival date. Best-effort — a restricted key without these
+# permissions just leaves the fields null rather than failing the widget.
+pending="null"
+resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/balance")" && {
+  code="${resp##*$'\n'}"
+  [[ "$code" == "200" ]] && pending="$(jq '[.pending[]?.amount] | add // 0' <<<"${resp%$'\n'*}")"
+}
+in_transit="null"
+arrival="null"
+resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/payouts?limit=10")" && {
+  code="${resp##*$'\n'}"
+  if [[ "$code" == "200" ]]; then
+    body="${resp%$'\n'*}"
+    in_transit="$(jq '[.data[] | select(.status == "pending" or .status == "in_transit")
+      | .amount] | add // 0' <<<"$body")"
+    arrival="$(jq '[.data[] | select(.status == "pending" or .status == "in_transit")
+      | .arrival_date] | min // null' <<<"$body")"
+  fi
+}
+
 jq -nc --argjson days "$days" --argjson payments "$payments" \
   --argjson last_month "$last_month" --argjson now "$now" \
-  '{days: $days, payments: $payments, last_month: $last_month, updated: $now}'
+  --argjson pending "$pending" --argjson in_transit "$in_transit" --argjson arrival "$arrival" \
+  '{days: $days, payments: $payments, last_month: $last_month,
+    payout: {pending: $pending, in_transit: $in_transit, arrival: $arrival},
+    updated: $now}'

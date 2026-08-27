@@ -23,6 +23,9 @@ Panel {
   readonly property var days: hostWidget ? hostWidget.days : []
   readonly property var payments: hostWidget ? hostWidget.payments : []
   readonly property var lastMonth: hostWidget ? hostWidget.lastMonth : null
+  readonly property var payout: hostWidget ? hostWidget.payout : null
+  readonly property bool hasPending: payout !== null && payout.pending !== null && payout.pending > 0
+  readonly property bool hasInTransit: payout !== null && payout.in_transit !== null && payout.in_transit > 0
   readonly property int todayCents: hostWidget ? hostWidget.todayCents : -1
   readonly property date lastUpdated: hostWidget ? hostWidget.lastUpdated : new Date(0)
 
@@ -145,6 +148,78 @@ Panel {
           }
 
           PanelSeparator {
+            width: parent.width
+          }
+
+          // ---- Money on the way: the pending balance, and any payout
+          //      already in transit with its arrival day.
+          Column {
+            visible: root.hasPending || root.hasInTransit
+            width: parent.width
+            spacing: Style.space(4)
+
+            Text {
+              text: "ON THE WAY"
+              color: root.dimForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+              font.letterSpacing: 1
+              font.bold: true
+            }
+
+            Item {
+              visible: root.hasPending
+              width: content.width
+              height: Style.space(20)
+
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Pending balance"
+                color: root.dimForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.hasPending ? root.moneyExact(root.payout.pending) : ""
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+
+            Item {
+              visible: root.hasInTransit
+              width: content.width
+              height: Style.space(20)
+
+              Text {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.hasInTransit && root.payout.arrival
+                  ? "Payout arriving " + Qt.formatDate(new Date(root.payout.arrival * 1000), "ddd MMM d")
+                  : "Payout in transit"
+                color: root.dimForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.hasInTransit ? root.moneyExact(root.payout.in_transit) : ""
+                color: root.contentForeground
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
+            }
+          }
+
+          PanelSeparator {
+            visible: root.hasPending || root.hasInTransit
             width: parent.width
           }
 
