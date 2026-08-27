@@ -157,6 +157,15 @@ Panel {
               font.family: root.contentFontFamily
               font.pixelSize: Style.font.bodySmall
             }
+
+            Text {
+              visible: root.lastUpdated.getTime() > 0
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "as of " + Qt.formatTime(root.lastUpdated, "h:mmap")
+              color: root.faintForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.caption
+            }
           }
 
           PanelSeparator {
