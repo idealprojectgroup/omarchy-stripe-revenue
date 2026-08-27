@@ -47,6 +47,42 @@ KEY="$(head -n1 "$KEY_FILE" | tr -d '[:space:]')"
 
 now="$(date +%s)"
 
+# No response is trusted to be sane-sized: bodies land in a temp file and
+# are size-checked against this ceiling before anything buffers or parses
+# them. Stripe pages run well under a megabyte.
+RESPONSE_BYTE_LIMIT=$(( 8 * 1024 * 1024 ))
+
+# stripe_get URL [MAX_TIME] -> body then the HTTP status code as the last
+# line, mirroring curl's -w layout the callers parse. The key reaches curl
+# as a config line on stdin — never in argv, where any same-user process
+# could read it out of /proc while the request runs.
+stripe_get() {
+  local url="$1" max_time="${2:-45}" tmp code size
+  tmp="$(mktemp)" || return 1
+  if ! code="$(curl -sg --max-time "$max_time" -K - -H "Stripe-Version: ${STRIPE_VERSION}" \
+      --max-filesize "$RESPONSE_BYTE_LIMIT" -o "$tmp" -w '%{http_code}' "$url" \
+      <<<"user = \"${KEY}:\"")"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  size="$(stat -c %s "$tmp" 2>/dev/null || echo 0)"
+  if (( size > RESPONSE_BYTE_LIMIT )); then
+    rm -f "$tmp"
+    return 1
+  fi
+  cat "$tmp"
+  printf '\n%s' "$code"
+  rm -f "$tmp"
+}
+
+# stripe_body URL [MAX_TIME] -> body alone, and only on HTTP 200.
+stripe_body() {
+  local out
+  out="$(stripe_get "$1" "${2:-45}")" || return 1
+  [[ "${out##*$'\n'}" == "200" ]] || return 1
+  printf '%s' "${out%$'\n'*}"
+}
+
 # fetch_rows GTE LT -> every income row in the window as one JSON array on
 # stdout (pages merged); nonzero exit on any failure, 2 on auth. Lean rows
 # only — totals need nothing but net, and a busy day is many pages.
@@ -55,7 +91,7 @@ fetch_rows() {
   while :; do
     url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
-    page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
+    page="$(stripe_get "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "401" || "$code" == "403" ]] && return 2
@@ -104,8 +140,7 @@ today_total="$(jq 'map(.net) | add // 0' <<<"$today_rows")"
 # which is why they resolve one at a time into a permanent local cache.
 # Best-effort: a failure here empties the feed for one poll, not the widget.
 payments="[]"
-resp="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' \
-  "https://api.stripe.com/v1/balance_transactions?limit=$(( PAYMENT_LIMIT * 3 ))&created[gte]=${today_start}&expand[]=data.source")" && {
+resp="$(stripe_get "https://api.stripe.com/v1/balance_transactions?limit=$(( PAYMENT_LIMIT * 3 ))&created[gte]=${today_start}&expand[]=data.source")" && {
   code="${resp##*$'\n'}"
   if [[ "$code" == "200" ]]; then
     payments="$(jq "[.data[] | ${INCOME_FILTER}
@@ -128,9 +163,9 @@ missing="$(jq -r --argjson known "$accounts" \
 if [[ -n "$missing" ]]; then
   lookup_dir="$(mktemp -d)"
   for acct_id in $missing; do
-    [[ "$acct_id" =~ ^acct_[A-Za-z0-9]+$ ]] || continue
-    curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" \
-      "https://api.stripe.com/v1/accounts/${acct_id}" \
+    # Old accounts can carry prefix-less ids; anything URL-safe passes.
+    [[ "$acct_id" =~ ^[A-Za-z0-9_]{8,64}$ ]] || continue
+    stripe_body "https://api.stripe.com/v1/accounts/${acct_id}" 20 \
       | jq -r '.business_profile.name? // .settings.dashboard.display_name? // empty' \
       > "$lookup_dir/$acct_id" 2>/dev/null &
   done
@@ -177,7 +212,7 @@ fetch_pending_rows() {
   while :; do
     url="https://api.stripe.com/v1/balance_transactions?limit=100&available_on[gte]=${gte}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
-    page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
+    page="$(stripe_get "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "200" ]] || return 1
@@ -212,7 +247,7 @@ fi
 
 if [[ -z "$payout_json" ]]; then
 pending="null"
-resp="$(curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "https://api.stripe.com/v1/balance")" && {
+resp="$(stripe_get "https://api.stripe.com/v1/balance" 20)" && {
   code="${resp##*$'\n'}"
   [[ "$code" == "200" ]] && pending="$(jq '[.pending[]?.amount] | add // 0' <<<"${resp%$'\n'*}")"
 }
@@ -228,7 +263,7 @@ if pending_rows="$(fetch_pending_rows "$(date -d 'yesterday 00:00' +%s)")"; then
 fi
 in_transit="null"
 arrival="null"
-resp="$(curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "https://api.stripe.com/v1/payouts?limit=10")" && {
+resp="$(stripe_get "https://api.stripe.com/v1/payouts?limit=10" 20)" && {
   code="${resp##*$'\n'}"
   if [[ "$code" == "200" ]]; then
     body="${resp%$'\n'*}"

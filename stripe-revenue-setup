@@ -32,9 +32,12 @@ if [[ -z "$key" ]]; then
 fi
 
 echo "Checking the key against Stripe…"
+# The key reaches curl as a config line on stdin — never in argv, where
+# any same-user process could read it out of /proc mid-request.
 code="$(curl -sg -o /dev/null -w '%{http_code}' --max-time 20 \
-  -u "${key}:" -H "Stripe-Version: 2024-06-20" \
-  "https://api.stripe.com/v1/balance_transactions?limit=1")"
+  -K - -H "Stripe-Version: 2024-06-20" \
+  "https://api.stripe.com/v1/balance_transactions?limit=1" \
+  <<<"user = \"${key}:\"")"
 
 if [[ "$code" != "200" ]]; then
   case "$code" in
