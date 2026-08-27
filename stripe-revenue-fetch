@@ -22,6 +22,10 @@ set -uo pipefail
 
 KEY_FILE="${STRIPE_REVENUE_KEY_FILE:-$HOME/.config/stripe-revenue/api_key}"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/stripe-revenue"
+# Pinned per-request so every account gets the same response shapes and
+# speed. Ancient account-pinned versions auto-count list results, which
+# makes their responses crawl or time out entirely.
+STRIPE_VERSION="2024-06-20"
 DAYS="${1:-7}"
 [[ "$DAYS" =~ ^[0-9]+$ ]] && (( DAYS >= 1 && DAYS <= 31 )) || DAYS=7
 PAYMENT_LIMIT=20
@@ -47,7 +51,7 @@ fetch_rows() {
   while :; do
     url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
-    page="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "$url")" || return 1
+    page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "401" || "$code" == "403" ]] && return 2
@@ -109,14 +113,17 @@ lm_lt="$(date -d "$lm_date 00:00 + 1 day" +%s)"
 lm_total="$(day_total "$lm_gte" "$lm_lt" "$lm_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
 last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
 
-# fetch_pending_rows GTE -> every still-pending balance transaction since
-# GTE as [{available_on, net}] on stdout; nonzero exit on any failure.
+# fetch_pending_rows GTE -> every still-pending balance transaction
+# maturing on or after GTE as [{available_on, net}] on stdout; nonzero
+# exit on any failure. Filtered server-side by available_on — pending
+# funds all mature today or later, so this reads a few pages instead of
+# scanning days of raw transactions.
 fetch_pending_rows() {
   local gte="$1" starting_after="" url page code body pages=""
   while :; do
-    url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}"
+    url="https://api.stripe.com/v1/balance_transactions?limit=100&available_on[gte]=${gte}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
-    page="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "$url")" || return 1
+    page="$(curl -sg --max-time 45 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "200" ]] || return 1
@@ -137,13 +144,26 @@ fetch_pending_rows() {
 # weekend maturities roll forward to Monday, the day Stripe pays them.
 # Best-effort — a restricted key without these permissions just leaves the
 # fields empty rather than failing the widget.
+#
+# This is the expensive part (it pages through several days of raw
+# transactions), and it moves slowly, so it recomputes at most every five
+# minutes and is served from cache in between.
+PAYOUT_CACHE="$CACHE_DIR/payout.json"
+PAYOUT_TTL=300
+payout_json=""
+if [[ -r "$PAYOUT_CACHE" ]] && (( now - $(stat -c %Y "$PAYOUT_CACHE" 2>/dev/null || echo 0) < PAYOUT_TTL )); then
+  payout_json="$(cat "$PAYOUT_CACHE")"
+  jq -e . >/dev/null 2>&1 <<<"$payout_json" || payout_json=""
+fi
+
+if [[ -z "$payout_json" ]]; then
 pending="null"
-resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/balance")" && {
+resp="$(curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "https://api.stripe.com/v1/balance")" && {
   code="${resp##*$'\n'}"
   [[ "$code" == "200" ]] && pending="$(jq '[.pending[]?.amount] | add // 0' <<<"${resp%$'\n'*}")"
 }
 upcoming="[]"
-if pending_rows="$(fetch_pending_rows "$(date -d '14 days ago' +%s)")"; then
+if pending_rows="$(fetch_pending_rows "$(date -d 'yesterday 00:00' +%s)")"; then
   upcoming="$(jq '[ .[]
     | .available_on as $t
     | (($t | gmtime)[6]) as $wd
@@ -154,7 +174,7 @@ if pending_rows="$(fetch_pending_rows "$(date -d '14 days ago' +%s)")"; then
 fi
 in_transit="null"
 arrival="null"
-resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.stripe.com/v1/payouts?limit=10")" && {
+resp="$(curl -sg --max-time 20 -u "${KEY}:" -H "Stripe-Version: ${STRIPE_VERSION}" -w '\n%{http_code}' "https://api.stripe.com/v1/payouts?limit=10")" && {
   code="${resp##*$'\n'}"
   if [[ "$code" == "200" ]]; then
     body="${resp%$'\n'*}"
@@ -165,10 +185,15 @@ resp="$(curl -sg --max-time 20 -u "${KEY}:" -w '\n%{http_code}' "https://api.str
   fi
 }
 
+payout_json="$(jq -nc --argjson pending "$pending" --argjson in_transit "$in_transit" \
+  --argjson arrival "$arrival" --argjson upcoming "$upcoming" \
+  '{pending: $pending, in_transit: $in_transit, arrival: $arrival, upcoming: $upcoming}')"
+mkdir -p "$CACHE_DIR"
+printf '%s\n' "$payout_json" > "$PAYOUT_CACHE"
+fi
+
 jq -nc --argjson days "$days" --argjson payments "$payments" \
   --argjson last_month "$last_month" --argjson now "$now" \
-  --argjson pending "$pending" --argjson in_transit "$in_transit" --argjson arrival "$arrival" \
-  --argjson upcoming "$upcoming" \
+  --argjson payout "$payout_json" \
   '{days: $days, payments: $payments, last_month: $last_month,
-    payout: {pending: $pending, in_transit: $in_transit, arrival: $arrival, upcoming: $upcoming},
-    updated: $now}'
+    payout: $payout, updated: $now}'

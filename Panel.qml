@@ -291,8 +291,7 @@ Panel {
                   id: paymentTime
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
-                  width: Style.space(44)
-                  text: Qt.formatTime(new Date(paymentRow.modelData.at * 1000), "h:mm ap")
+                  text: Qt.formatTime(new Date(paymentRow.modelData.at * 1000), "h:mmap")
                   color: root.faintForeground
                   font.family: root.contentFontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -311,7 +310,7 @@ Panel {
                 Text {
                   anchors.left: paymentTime.right
                   anchors.right: paymentAmount.left
-                  anchors.leftMargin: Style.space(8)
+                  anchors.leftMargin: Style.space(6)
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.paymentLabel(paymentRow.modelData)
