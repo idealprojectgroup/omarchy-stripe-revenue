@@ -52,6 +52,16 @@ now="$(date +%s)"
 # them. Stripe pages run well under a megabyte.
 RESPONSE_BYTE_LIMIT=$(( 8 * 1024 * 1024 ))
 
+# Nor is the remote's has_more trusted to terminate: each paginated
+# operation fails closed after this many pages, and after this many
+# accumulated characters of filtered rows — a faulty or compromised
+# endpoint that keeps promising more pages hits a wall instead of growing
+# process memory. Twenty pages is 2,000 transactions in one operation's
+# window, far beyond a real day; the filtered rows for that many run tens
+# of kilobytes against a multi-megabyte ceiling.
+PAGE_LIMIT=20
+AGGREGATE_CHAR_LIMIT=$(( 4 * 1024 * 1024 ))
+
 # stripe_get URL [MAX_TIME] -> body then the HTTP status code as the last
 # line, mirroring curl's -w layout the callers parse. The key reaches curl
 # as a config line on stdin — never in argv, where any same-user process
@@ -87,8 +97,9 @@ stripe_body() {
 # stdout (pages merged); nonzero exit on any failure, 2 on auth. Lean rows
 # only — totals need nothing but net, and a busy day is many pages.
 fetch_rows() {
-  local gte="$1" lt="$2" starting_after="" url page code body pages=""
+  local gte="$1" lt="$2" starting_after="" url page code body chunk pages="" pages_read=0
   while :; do
+    (( ++pages_read > PAGE_LIMIT )) && return 1
     url="https://api.stripe.com/v1/balance_transactions?limit=100&created[gte]=${gte}&created[lt]=${lt}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
     page="$(stripe_get "$url")" || return 1
@@ -96,7 +107,9 @@ fetch_rows() {
     body="${page%$'\n'*}"
     [[ "$code" == "401" || "$code" == "403" ]] && return 2
     [[ "$code" == "200" ]] || return 1
-    pages+="$(jq "[.data[] | ${INCOME_FILTER} | {created, type, net}]" <<<"$body")" || return 1
+    chunk="$(jq "[.data[] | ${INCOME_FILTER} | {created, type, net}]" <<<"$body")" || return 1
+    (( ${#pages} + ${#chunk} > AGGREGATE_CHAR_LIMIT )) && return 1
+    pages+="$chunk"
     pages+=$'\n'
     if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
       starting_after="$(jq -r '.data[-1].id' <<<"$body")"
@@ -208,15 +221,18 @@ last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
 # funds all mature today or later, so this reads a few pages instead of
 # scanning days of raw transactions.
 fetch_pending_rows() {
-  local gte="$1" starting_after="" url page code body pages=""
+  local gte="$1" starting_after="" url page code body chunk pages="" pages_read=0
   while :; do
+    (( ++pages_read > PAGE_LIMIT )) && return 1
     url="https://api.stripe.com/v1/balance_transactions?limit=100&available_on[gte]=${gte}"
     [[ -n "$starting_after" ]] && url="${url}&starting_after=${starting_after}"
     page="$(stripe_get "$url")" || return 1
     code="${page##*$'\n'}"
     body="${page%$'\n'*}"
     [[ "$code" == "200" ]] || return 1
-    pages+="$(jq '[.data[] | select(.status == "pending") | {available_on, net}]' <<<"$body")" || return 1
+    chunk="$(jq '[.data[] | select(.status == "pending") | {available_on, net}]' <<<"$body")" || return 1
+    (( ${#pages} + ${#chunk} > AGGREGATE_CHAR_LIMIT )) && return 1
+    pages+="$chunk"
     pages+=$'\n'
     if [[ "$(jq -r '.has_more' <<<"$body")" == "true" ]]; then
       starting_after="$(jq -r '.data[-1].id' <<<"$body")"
