@@ -42,10 +42,24 @@ fail() {
 }
 
 [[ -r "$KEY_FILE" ]] || fail no_key
+# A key readable by group or other is refused, ssh-style: the setup flow
+# writes 0600, and looser permissions defeat keeping it in a file at all.
+key_perms="$(stat -c %a "$KEY_FILE" 2>/dev/null || echo 000)"
+[[ "$key_perms" =~ ^[4-7]00$ ]] || fail key_perms
 KEY="$(head -n1 "$KEY_FILE" | tr -d '[:space:]')"
 [[ -n "$KEY" ]] || fail no_key
 
 now="$(date +%s)"
+
+# The caches hold financial data, so nobody else on the machine gets to
+# read them; and every response temp file lives in a private work dir
+# that is removed however the script exits, so interrupted runs leave no
+# transaction data behind in /tmp.
+mkdir -p "$CACHE_DIR"
+chmod 700 "$CACHE_DIR"
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"; trap - EXIT; exit 130' INT TERM
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 # No response is trusted to be sane-sized: bodies land in a temp file and
 # are size-checked against this ceiling before anything buffers or parses
@@ -68,7 +82,7 @@ AGGREGATE_CHAR_LIMIT=$(( 4 * 1024 * 1024 ))
 # could read it out of /proc while the request runs.
 stripe_get() {
   local url="$1" max_time="${2:-45}" tmp code size
-  tmp="$(mktemp)" || return 1
+  tmp="$(mktemp -p "$WORK_DIR")" || return 1
   if ! code="$(curl -sg --max-time "$max_time" -K - -H "Stripe-Version: ${STRIPE_VERSION}" \
       --max-filesize "$RESPONSE_BYTE_LIMIT" -o "$tmp" -w '%{http_code}' "$url" \
       <<<"user = \"${KEY}:\"")"; then
@@ -125,7 +139,7 @@ fetch_rows() {
 day_total() {
   local gte="$1" lt="$2" cache_key="$3" cache_file rows total
   if [[ -n "$cache_key" ]]; then
-    cache_file="$CACHE_DIR/v2-$cache_key"
+    cache_file="$CACHE_DIR/v3-$cache_key"
     if [[ -r "$cache_file" ]]; then
       cat "$cache_file"
       return 0
@@ -135,7 +149,7 @@ day_total() {
   total="$(jq 'map(.net) | add // 0' <<<"$rows")"
   if [[ -n "$cache_key" ]]; then
     mkdir -p "$CACHE_DIR"
-    printf '%s\n' "$total" > "$CACHE_DIR/v2-$cache_key"
+    printf '%s\n' "$total" > "$CACHE_DIR/v3-$cache_key"
   fi
   echo "$total"
 }
@@ -174,7 +188,7 @@ jq -e 'type == "object"' >/dev/null 2>&1 <<<"$accounts" || accounts="{}"
 missing="$(jq -r --argjson known "$accounts" \
   '[.[] | .acct | select(. != "" and $known[.] == null)] | unique | .[0:12] | .[]' <<<"$payments")"
 if [[ -n "$missing" ]]; then
-  lookup_dir="$(mktemp -d)"
+  lookup_dir="$(mktemp -d -p "$WORK_DIR")"
   for acct_id in $missing; do
     # Old accounts can carry prefix-less ids; anything URL-safe passes.
     [[ "$acct_id" =~ ^[A-Za-z0-9_]{8,64}$ ]] || continue
@@ -211,7 +225,9 @@ days+="]"
 # A past day, so it caches like the history above.
 lm_date="$(date -d "1 month ago" +%F)"
 lm_gte="$(date -d "$lm_date 00:00" +%s)"
-lm_lt="$(date -d "$lm_date 00:00 + 1 day" +%s)"
+# "00:00 1 day", never "00:00 + 1 day": GNU date reads a bare "+ 1" after
+# a time as a UTC+1 timezone, which silently ends the window hours early.
+lm_lt="$(date -d "$lm_date 00:00 1 day" +%s)"
 lm_total="$(day_total "$lm_gte" "$lm_lt" "$lm_date")" || { [[ $? -eq 2 ]] && fail auth; fail fetch_failed; }
 last_month="{\"date\":\"${lm_date}\",\"cents\":${lm_total}}"
 

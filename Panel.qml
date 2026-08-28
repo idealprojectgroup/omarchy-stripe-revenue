@@ -337,6 +337,9 @@ Panel {
                   anchors.rightMargin: Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.paymentLabel(paymentRow.modelData)
+                  // Names and descriptions are remote-controlled strings;
+                  // never let AutoText interpret markup planted in them.
+                  textFormat: Text.PlainText
                   elide: Text.ElideRight
                   color: root.dimForeground
                   font.family: root.contentFontFamily

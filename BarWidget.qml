@@ -36,10 +36,10 @@ BarWidget {
 
   readonly property string fetchScript: Qt.resolvedUrl("stripe-revenue-fetch").toString().replace(/^file:\/\//, "")
   readonly property string setupScript: Qt.resolvedUrl("stripe-revenue-setup").toString().replace(/^file:\/\//, "")
-  readonly property bool needsSetup: error === "no_key" || error === "auth"
+  readonly property bool needsSetup: error === "no_key" || error === "auth" || error === "key_perms"
 
   readonly property string displayText: {
-    if (error === "no_key" || error === "auth") return "Stripe: set key"
+    if (root.needsSetup) return "Stripe: set key"
     // A transient failure keeps the last good numbers on the bar; the next
     // poll heals it. Only a failure with nothing to show reads as an error.
     if (todayCents >= 0) return money(todayCents)
@@ -50,6 +50,7 @@ BarWidget {
   readonly property string tooltip: {
     if (error === "no_key") return "Click to set up your Stripe API key"
     if (error === "auth") return "Stripe rejected the saved API key — click to set it up again"
+    if (error === "key_perms") return "Key file is readable by others — click to re-save it locked down"
     if (error !== "")
       return "Could not reach Stripe — will retry"
         + (todayCents >= 0 ? " (showing " + Qt.formatTime(lastUpdated, "h:mm ap") + " numbers)" : "")
@@ -78,7 +79,7 @@ BarWidget {
   }
 
   function runSetup() {
-    if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation " + root.setupScript)
+    if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation \"" + root.setupScript + "\"")
   }
 
   function applyResult(text) {
