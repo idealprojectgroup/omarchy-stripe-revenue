@@ -80,6 +80,15 @@ KEY="$(read_bounded "$KEY_FILE" 256 | head -n1 | tr -d '[:space:]')"
 
 now="$(date +%s)"
 
+# A whole-run wall-clock ceiling, on top of every per-request --max-time:
+# a slow endpoint that answers each page just under its own timeout could
+# otherwise stretch a cold-cache run across many serial requests into
+# hours, freezing the widget on stale data the whole time. Past the
+# deadline every request fails fast, so the run exits in bounded time and
+# the next poll retries — a couple of minutes is well beyond any real
+# cold backfill but far short of that runaway.
+DEADLINE=$(( now + 150 ))
+
 # The caches hold financial data, so nobody else on the machine gets to
 # read them; and every response temp file lives in a private work dir
 # that is removed however the script exits, so interrupted runs leave no
@@ -111,7 +120,12 @@ AGGREGATE_CHAR_LIMIT=$(( 4 * 1024 * 1024 ))
 # as a config line on stdin — never in argv, where any same-user process
 # could read it out of /proc while the request runs.
 stripe_get() {
-  local url="$1" max_time="${2:-45}" tmp code size
+  local url="$1" max_time="${2:-45}" tmp code size remaining
+  # Clamp this request's timeout to whatever remains of the run budget,
+  # and fail fast once the budget is spent — no request may outlive it.
+  remaining=$(( DEADLINE - $(date +%s) ))
+  (( remaining <= 2 )) && return 1
+  (( remaining < max_time )) && max_time="$remaining"
   tmp="$(mktemp -p "$WORK_DIR")" || return 1
   if ! code="$(curl -sg --max-time "$max_time" -K - -H "Stripe-Version: ${STRIPE_VERSION}" \
       --max-filesize "$RESPONSE_BYTE_LIMIT" -o "$tmp" -w '%{http_code}' "$url" \
