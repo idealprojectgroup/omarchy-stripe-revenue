@@ -31,6 +31,13 @@ if [[ -z "$key" ]]; then
   pause_and_exit 1
 fi
 
+# Held to Stripe's key grammar before it touches the network or disk —
+# anything else cannot inject into curl's config syntax downstream.
+if ! [[ "$key" =~ ^[A-Za-z0-9_]{12,256}$ ]]; then
+  echo "That doesn't look like a Stripe API key (rk_live_… / sk_live_…)."
+  pause_and_exit 1
+fi
+
 echo "Checking the key against Stripe…"
 # The key reaches curl as a config line on stdin — never in argv, where
 # any same-user process could read it out of /proc mid-request.
@@ -48,9 +55,22 @@ if [[ "$code" != "200" ]]; then
   pause_and_exit 1
 fi
 
-mkdir -p "$(dirname "$KEY_FILE")"
-chmod 700 "$(dirname "$KEY_FILE")"
-(umask 177 && printf '%s\n' "$key" > "$KEY_FILE")
+# Atomic owner-only publication: 0600 temp in the destination's own
+# directory, synced, renamed over the target — a symlink planted at the
+# key path is replaced, never written through, so the key cannot land
+# anywhere but this directory.
+key_dir="$(dirname "$KEY_FILE")"
+mkdir -p "$key_dir"
+if [[ ! -d "$key_dir" || -L "$key_dir" ]]; then
+  echo "Refusing to save: $key_dir is not a real directory."
+  pause_and_exit 1
+fi
+chmod 700 "$key_dir"
+tmp="$(mktemp -p "$key_dir")"
+printf '%s\n' "$key" > "$tmp"
+chmod 600 "$tmp"
+sync "$tmp" 2>/dev/null
+mv -f -T "$tmp" "$KEY_FILE"
 
 echo "Key verified and saved to $KEY_FILE"
 omarchy-shell -q io.github.idealprojectgroup.stripe-revenue refresh

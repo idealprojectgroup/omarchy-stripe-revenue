@@ -41,13 +41,42 @@ fail() {
   exit 0
 }
 
+# read_bounded FILE MAXBYTES -> at most MAXBYTES bytes of FILE. The open
+# itself refuses symlinks (nofollow) and cannot block on a planted FIFO
+# (nonblock), and dd enforces the byte count — descriptor-first, so there
+# is no gap between checking the path and reading it.
+read_bounded() {
+  dd if="$1" iflag=nofollow,nonblock bs=1 count="$2" 2>/dev/null
+}
+
+# publish DEST CONTENT -> atomic owner-only write: a 0600 temp file in
+# DEST's own directory, synced, then renamed over DEST. rename replaces a
+# symlink planted at DEST instead of writing through it, so content never
+# lands anywhere but this directory.
+publish() {
+  local dest="$1" content="$2" tmp
+  tmp="$(mktemp -p "$(dirname "$dest")")" || return 1
+  if ! printf '%s\n' "$content" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 600 "$tmp"
+  sync "$tmp" 2>/dev/null
+  mv -f -T "$tmp" "$dest"
+}
+
 [[ -r "$KEY_FILE" ]] || fail no_key
 # A key readable by group or other is refused, ssh-style: the setup flow
 # writes 0600, and looser permissions defeat keeping it in a file at all.
 key_perms="$(stat -c %a "$KEY_FILE" 2>/dev/null || echo 000)"
 [[ "$key_perms" =~ ^[4-7]00$ ]] || fail key_perms
-KEY="$(head -n1 "$KEY_FILE" | tr -d '[:space:]')"
+# Read descriptor-first and byte-bounded, then hold the value to Stripe's
+# key grammar before it goes anywhere near curl config syntax — a
+# replaced key file cannot smuggle quotes, whitespace, or extra curl
+# options into the request.
+KEY="$(read_bounded "$KEY_FILE" 256 | head -n1 | tr -d '[:space:]')"
 [[ -n "$KEY" ]] || fail no_key
+[[ "$KEY" =~ ^[A-Za-z0-9_]{12,256}$ ]] || fail no_key
 
 now="$(date +%s)"
 
@@ -56,6 +85,7 @@ now="$(date +%s)"
 # that is removed however the script exits, so interrupted runs leave no
 # transaction data behind in /tmp.
 mkdir -p "$CACHE_DIR"
+[[ -d "$CACHE_DIR" && ! -L "$CACHE_DIR" ]] || fail fetch_failed
 chmod 700 "$CACHE_DIR"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"; trap - EXIT; exit 130' INT TERM
@@ -141,15 +171,19 @@ day_total() {
   if [[ -n "$cache_key" ]]; then
     cache_file="$CACHE_DIR/v3-$cache_key"
     if [[ -r "$cache_file" ]]; then
-      cat "$cache_file"
-      return 0
+      # Bounded, no-follow read; anything but a plain integer is treated
+      # as a cache miss and recomputed rather than trusted.
+      total="$(read_bounded "$cache_file" 32 | tr -d '[:space:]')"
+      if [[ "$total" =~ ^-?[0-9]{1,15}$ ]]; then
+        echo "$total"
+        return 0
+      fi
     fi
   fi
   rows="$(fetch_rows "$gte" "$lt")" || return $?
   total="$(jq 'map(.net) | add // 0' <<<"$rows")"
   if [[ -n "$cache_key" ]]; then
-    mkdir -p "$CACHE_DIR"
-    printf '%s\n' "$total" > "$CACHE_DIR/v3-$cache_key"
+    publish "$cache_file" "$total" || true
   fi
   echo "$total"
 }
@@ -182,7 +216,8 @@ resp="$(stripe_get "https://api.stripe.com/v1/balance_transactions?limit=$(( PAY
 # changes. A name that fails to resolve just falls back to the row's
 # description until a later poll gets it.
 ACCOUNTS_CACHE="$CACHE_DIR/accounts.json"
-accounts="$(cat "$ACCOUNTS_CACHE" 2>/dev/null)"
+CACHE_READ_LIMIT=$(( 256 * 1024 ))
+accounts="$(read_bounded "$ACCOUNTS_CACHE" "$CACHE_READ_LIMIT")"
 jq -e 'type == "object"' >/dev/null 2>&1 <<<"$accounts" || accounts="{}"
 
 missing="$(jq -r --argjson known "$accounts" \
@@ -203,8 +238,7 @@ if [[ -n "$missing" ]]; then
     accounts="$(jq --arg id "$acct_id" --arg name "$name" '. + {($id): $name}' <<<"$accounts")"
   done
   rm -rf "$lookup_dir"
-  mkdir -p "$CACHE_DIR"
-  printf '%s\n' "$accounts" > "$ACCOUNTS_CACHE"
+  publish "$ACCOUNTS_CACHE" "$accounts" || true
 fi
 
 payments="$(jq --argjson names "$accounts" \
@@ -273,7 +307,7 @@ PAYOUT_CACHE="$CACHE_DIR/payout.json"
 PAYOUT_TTL=300
 payout_json=""
 if [[ -r "$PAYOUT_CACHE" ]] && (( now - $(stat -c %Y "$PAYOUT_CACHE" 2>/dev/null || echo 0) < PAYOUT_TTL )); then
-  payout_json="$(cat "$PAYOUT_CACHE")"
+  payout_json="$(read_bounded "$PAYOUT_CACHE" "$CACHE_READ_LIMIT")"
   jq -e . >/dev/null 2>&1 <<<"$payout_json" || payout_json=""
 fi
 
@@ -313,8 +347,7 @@ resp="$(stripe_get "https://api.stripe.com/v1/payouts?limit=10" 20)" && {
 payout_json="$(jq -nc --argjson pending "$pending" --argjson in_transit "$in_transit" \
   --argjson arrival "$arrival" --argjson upcoming "$upcoming" \
   '{pending: $pending, in_transit: $in_transit, arrival: $arrival, upcoming: $upcoming}')"
-mkdir -p "$CACHE_DIR"
-printf '%s\n' "$payout_json" > "$PAYOUT_CACHE"
+publish "$PAYOUT_CACHE" "$payout_json" || true
 fi
 
 jq -nc --argjson days "$days" --argjson payments "$payments" \
