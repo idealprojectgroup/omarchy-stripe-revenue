@@ -21,31 +21,8 @@ Left-clicking the bar number opens a popup with:
 - **Previous days** — net totals for the last week (configurable).
 - A link to the Stripe dashboard and a last-updated stamp.
 
-Right click refreshes immediately; middle click hides the amounts (see
-below).
-
-## Hiding the amounts
-
-About to share your screen? Middle-click the bar number and every amount —
-bar and panel — becomes `$••••`. Middle-click again to bring them back.
-The panel's hero number and its "Hide amounts" footer link do the same.
-
-The same toggle is available over IPC, so you can bind it to a key:
-
-```bash
-omarchy-shell io.github.idealprojectgroup.stripe-revenue toggleAmounts
-omarchy-shell io.github.idealprojectgroup.stripe-revenue hideAmounts
-omarchy-shell io.github.idealprojectgroup.stripe-revenue showAmounts
-```
-
-```lua
--- ~/.config/hypr/bindings.lua
-o.bind("SUPER + SHIFT + H", "Stripe: hide/show amounts",
-  "omarchy-shell -q io.github.idealprojectgroup.stripe-revenue toggleAmounts")
-```
-
-The state lives in `~/.config/stripe-revenue/hidden` (`1` = hidden), so it
-survives a shell restart and scripts can flip it directly.
+Right click refreshes immediately; middle click opens the Stripe
+dashboard directly.
 
 ## Setup
 

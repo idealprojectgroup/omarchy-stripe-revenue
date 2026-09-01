@@ -1,13 +1,11 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Ui
 
 // Today's net Stripe income as a single number in the bar. Left click opens
 // the detail panel — today's payments, recent days, same day last month —
 // or the setup terminal when no working key is saved. Right click refreshes
-// now; middle click hides every amount (bar and panel) for screen sharing
-// and shows them again.
+// now; middle click opens the Stripe dashboard.
 //
 // The numbers come from the bundled stripe-revenue-fetch script, which reads
 // a restricted API key from ~/.config/stripe-revenue/api_key — the key never
@@ -40,15 +38,8 @@ BarWidget {
   readonly property string setupScript: Qt.resolvedUrl("stripe-revenue-setup").toString().replace(/^file:\/\//, "")
   readonly property bool needsSetup: error === "no_key" || error === "auth" || error === "key_perms"
 
-  // Every amount masked, on the bar and in the panel. Kept in a file next to
-  // the key so a shell restart mid-screen-share doesn't put the numbers back.
-  property bool hidden: false
-  readonly property string hiddenPath: (Quickshell.env("HOME") || "") + "/.config/stripe-revenue/hidden"
-  readonly property string maskedText: "$••••"
-
   readonly property string displayText: {
     if (root.needsSetup) return "Stripe: set key"
-    if (root.hidden) return root.maskedText
     // A transient failure keeps the last good numbers on the bar; the next
     // poll heals it. Only a failure with nothing to show reads as an error.
     if (todayCents >= 0) return money(todayCents)
@@ -60,12 +51,11 @@ BarWidget {
     if (error === "no_key") return "Click to set up your Stripe API key"
     if (error === "auth") return "Stripe rejected the saved API key — click to set it up again"
     if (error === "key_perms") return "Key file is readable by others — click to re-save it locked down"
-    if (root.hidden) return "Amounts hidden — middle click to show them"
     if (error !== "")
       return "Could not reach Stripe — will retry"
         + (todayCents >= 0 ? " (showing " + Qt.formatTime(lastUpdated, "h:mm ap") + " numbers)" : "")
     if (todayCents < 0) return "Loading Stripe revenue…"
-    return "Net income today — click for details, middle click to hide"
+    return "Net income today — click for details"
   }
 
   function setting(name, fallback) {
@@ -90,15 +80,6 @@ BarWidget {
 
   function runSetup() {
     if (root.bar) root.bar.run("omarchy-launch-floating-terminal-with-presentation \"" + root.setupScript + "\"")
-  }
-
-  function setHidden(value) {
-    root.hidden = value === true
-    hiddenFile.setText(root.hidden ? "1\n" : "0\n")
-  }
-
-  function toggleHidden() {
-    setHidden(!root.hidden)
   }
 
   function applyResult(text) {
@@ -176,22 +157,6 @@ BarWidget {
     function open(): void { root.open() }
     function close(): void { root.close() }
     function toggle(): void { root.togglePanel() }
-    function hideAmounts(): void { root.setHidden(true) }
-    function showAmounts(): void { root.setHidden(false) }
-    function toggleAmounts(): void { root.toggleHidden() }
-  }
-
-  // The file is the source of truth, so `echo 1 > ~/.config/stripe-revenue/hidden`
-  // from a script works as well as the click. Missing file means shown.
-  FileView {
-    id: hiddenFile
-    path: root.hiddenPath
-    watchChanges: true
-    atomicWrites: true
-    printErrors: false
-    onLoaded: root.hidden = String(text() || "").trim() === "1"
-    onLoadFailed: root.hidden = false
-    onFileChanged: reload()
   }
 
   Timer {
@@ -250,7 +215,7 @@ BarWidget {
 
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) root.refresh()
-      else if (buttonCode === Qt.MiddleButton) root.toggleHidden()
+      else if (buttonCode === Qt.MiddleButton) Qt.openUrlExternally("https://dashboard.stripe.com/payments")
       else if (root.needsSetup) root.runSetup()
       else root.togglePanel()
     }

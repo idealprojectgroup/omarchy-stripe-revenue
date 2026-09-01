@@ -30,20 +30,13 @@ Panel {
   readonly property bool hasOnTheWay: upcoming.length > 0 || hasPending || hasInTransit
   readonly property int todayCents: hostWidget ? hostWidget.todayCents : -1
   readonly property date lastUpdated: hostWidget ? hostWidget.lastUpdated : new Date(0)
-  readonly property bool hidden: hostWidget ? hostWidget.hidden === true : false
 
   readonly property color contentForeground: bar ? bar.foreground : Color.foreground
   readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color dimForeground: Qt.darker(contentForeground, 1.6)
   readonly property color faintForeground: Qt.darker(contentForeground, 2.0)
 
-  function toggleHidden() {
-    if (hostWidget && typeof hostWidget.toggleHidden === "function") hostWidget.toggleHidden()
-  }
-
-  // Every amount in the panel goes through here, so hiding masks all of it.
   function moneyExact(cents) {
-    if (root.hidden) return "$••••"
     var sign = cents < 0 ? "-" : ""
     return sign + "$" + (Math.abs(cents) / 100).toLocaleString(Qt.locale("en_US"), "f", 2)
   }
@@ -157,21 +150,13 @@ Panel {
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
               text: root.todayCents < 0 ? "…" : root.moneyExact(root.todayCents)
-              color: heroMouse.containsMouse ? root.dimForeground : root.contentForeground
+              color: root.contentForeground
               font.family: root.contentFontFamily
               // Fits itself to the panel when the day runs to six figures.
               font.pixelSize: 44
               fontSizeMode: Text.HorizontalFit
               minimumPixelSize: 22
               font.weight: Font.DemiBold
-
-              MouseArea {
-                id: heroMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.toggleHidden()
-              }
             }
 
             Text {
@@ -413,7 +398,7 @@ Panel {
             }
           }
 
-          // ---- Footer: the dashboard, and the amounts mask.
+          // ---- Footer: the dashboard.
           Item {
             width: parent.width
             height: Style.space(22)
@@ -437,25 +422,6 @@ Panel {
                   Qt.openUrlExternally("https://dashboard.stripe.com/payments")
                   root.close()
                 }
-              }
-            }
-
-            Text {
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.hidden ? "Show amounts" : "Hide amounts"
-              color: hiddenMouse.containsMouse
-                ? Style.hoverStateColor(root.contentForeground, Color.accent)
-                : root.dimForeground
-              font.family: root.contentFontFamily
-              font.pixelSize: Style.font.bodySmall
-
-              MouseArea {
-                id: hiddenMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.toggleHidden()
               }
             }
           }
