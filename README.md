@@ -47,6 +47,11 @@ o.bind("SUPER + SHIFT + H", "Stripe: hide/show amounts",
 The state lives in `~/.config/stripe-revenue/hidden` (`1` = hidden), so it
 survives a shell restart and scripts can flip it directly.
 
+This is a display mask for people looking at your screen, not a security
+boundary: anything running as your user can flip it back, and the numbers
+are still in the shell's memory and the cache. Payer and studio names stay
+visible while hidden.
+
 ## Setup
 
 1. Enable the widget:

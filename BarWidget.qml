@@ -182,7 +182,9 @@ BarWidget {
   }
 
   // The file is the source of truth, so `echo 1 > ~/.config/stripe-revenue/hidden`
-  // from a script works as well as the click. Missing file means shown.
+  // from a script works as well as the click. A file that can't be read
+  // leaves the current state alone rather than unmasking: at startup that is
+  // "shown"; mid-session it must never turn a broken file into a reveal.
   FileView {
     id: hiddenFile
     path: root.hiddenPath
@@ -190,7 +192,6 @@ BarWidget {
     atomicWrites: true
     printErrors: false
     onLoaded: root.hidden = String(text() || "").trim() === "1"
-    onLoadFailed: root.hidden = false
     onFileChanged: reload()
   }
 
